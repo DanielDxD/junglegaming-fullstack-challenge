@@ -1,18 +1,20 @@
 import React, { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from 'react-oidc-context';
+import { useGetWallet } from '@/application/hooks/useWallet';
 import { useWalletViewModel } from '@/application/view-models/useWalletViewModel';
 import { WalletIcon, LogOut, User } from 'lucide-react';
 
 export const Header: React.FC = () => {
   const auth = useAuth();
-  const { wallet, fetchWallet } = useWalletViewModel();
+  const { setWallet } = useWalletViewModel();
+  const { data: wallet, isLoading: isLoadingWallet } = useGetWallet(auth.isAuthenticated);
 
   useEffect(() => {
-    if (auth.isAuthenticated) {
-      fetchWallet();
+    if (wallet) {
+      setWallet(wallet);
     }
-  }, [auth.isAuthenticated, fetchWallet]);
+  }, [wallet, setWallet]);
 
   return (
     <header className="border-b border-zinc-800 bg-zinc-950 px-4 py-3 flex items-center justify-between sticky top-0 z-50">
@@ -28,7 +30,9 @@ export const Header: React.FC = () => {
           <div className="h-9 w-24 bg-zinc-800 animate-pulse rounded-md"></div>
         ) : auth.isAuthenticated ? (
           <>
-            {wallet && (
+            {isLoadingWallet ? (
+              <div className="h-8 w-24 bg-zinc-900 border border-zinc-800 animate-pulse rounded-md"></div>
+            ) : wallet && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-900 border border-zinc-800">
                 <WalletIcon className="w-4 h-4 text-green-500" />
                 <span className="font-mono text-sm font-bold text-green-400">

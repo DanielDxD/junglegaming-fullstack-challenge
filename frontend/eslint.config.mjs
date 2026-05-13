@@ -19,7 +19,8 @@ const eslintConfig = defineConfig([
   ...storybook.configs["flat/recommended"],
   {
     rules: {
-      "storybook/no-renderer-packages": "off"
+      "storybook/no-renderer-packages": "off",
+      "react-hooks/exhaustive-deps": "off"
     }
   }
 ]);

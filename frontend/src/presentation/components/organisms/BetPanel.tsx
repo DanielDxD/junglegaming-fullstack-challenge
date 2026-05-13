@@ -2,18 +2,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { usePlaceBet, useCashout } from '@/application/hooks/useGame';
 import { useGameViewModel } from '@/application/view-models/useGameViewModel';
-import { useWalletViewModel } from '@/application/view-models/useWalletViewModel';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from 'react-oidc-context';
 import { toast } from 'sonner';
 import { useSound } from '@/application/hooks/sound';
 import { cn } from '@/lib/utils';
 
 export const BetPanel: React.FC = () => {
-  const { round, multiplier, placeBet, cashout, bets } = useGameViewModel();
-  const fetchWallet = useWalletViewModel(state => state.fetchWallet);
+  const { round, multiplier, bets } = useGameViewModel();
   const auth = useAuth();
+  const queryClient = useQueryClient();
   const { play: playCash } = useSound('/audio/cash.mp3', { autoPlay: false, loop: false });
+
+  const placeBetMutation = usePlaceBet();
+  const cashoutMutation = useCashout();
 
   const [betAmount, setBetAmount] = useState<string>('10.00');
   const [autoCashoutValue, setAutoCashoutValue] = useState<string>('');
@@ -22,7 +26,6 @@ export const BetPanel: React.FC = () => {
   const [martingaleMultiplier, setMartingaleMultiplier] = useState<string>('2.0');
   const [stopLoss, setStopLoss] = useState<string>('');
   const [baseBetAmount, setBaseBetAmount] = useState<string>('10.00');
-  const [isPlacingBet, setIsPlacingBet] = useState(false);
   const [totalSessionLoss, setTotalSessionLoss] = useState(0);
 
   const lastRoundId = useRef<string | null>(null);
@@ -53,13 +56,14 @@ export const BetPanel: React.FC = () => {
       return;
     }
 
-    setIsPlacingBet(true);
-    const success = await placeBet(amountInCents, autoCashoutMult);
-    setIsPlacingBet(false);
-
-    if (success) {
-      fetchWallet();
-    }
+    placeBetMutation.mutate({
+      amount: amountInCents,
+      autoCashoutMultiplier: autoCashoutMult
+    }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      }
+    });
   };
 
   const handleAutoBet = async () => {
@@ -91,23 +95,24 @@ export const BetPanel: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isBettingPhase && isAutoBetEnabled && round?.id !== lastRoundId.current && !hasPlacedBet && !isPlacingBet) {
+    if (isBettingPhase && isAutoBetEnabled && round?.id !== lastRoundId.current && !hasPlacedBet && !placeBetMutation.isPending) {
       lastRoundId.current = round?.id || null;
       handleAutoBet();
     }
-  }, [isBettingPhase, isAutoBetEnabled, round?.id, hasPlacedBet]);
+  }, [isBettingPhase, isAutoBetEnabled, round?.id, hasPlacedBet, placeBetMutation.isPending]);
 
 
 
 
 
-  const handleCashout = async () => {
-    const success = await cashout();
-    if (success) {
-      playCash();
-      toast.success(`Cash Out com sucesso em ${multiplier.toFixed(2)}x!`);
-      fetchWallet();
-    }
+  const handleCashout = () => {
+    cashoutMutation.mutate(undefined, {
+      onSuccess: () => {
+        playCash();
+        toast.success(`Cash Out com sucesso em ${multiplier.toFixed(2)}x!`);
+        queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      }
+    });
   };
 
   return (
@@ -126,7 +131,7 @@ export const BetPanel: React.FC = () => {
                 className="pl-8 bg-zinc-950 border-zinc-800 font-mono text-lg"
                 value={betAmount}
                 onChange={(e) => setBetAmount(e.target.value)}
-                disabled={hasPlacedBet || !isBettingPhase || isPlacingBet}
+                disabled={hasPlacedBet || !isBettingPhase || placeBetMutation.isPending}
               />
             </div>
           </div>
@@ -143,7 +148,7 @@ export const BetPanel: React.FC = () => {
                 className="pr-8 bg-zinc-950 border-zinc-800 font-mono text-lg"
                 value={autoCashoutValue}
                 onChange={(e) => setAutoCashoutValue(e.target.value)}
-                disabled={hasPlacedBet || !isBettingPhase || isPlacingBet}
+                disabled={hasPlacedBet || !isBettingPhase || placeBetMutation.isPending}
               />
             </div>
           </div>
@@ -179,7 +184,7 @@ export const BetPanel: React.FC = () => {
               <Button
                 className="w-full h-14 text-sm font-bold bg-green-500 hover:bg-green-600 text-zinc-950 transition-all"
                 onClick={() => handlePlaceBet()}
-                disabled={hasPlacedBet || !isBettingPhase || isPlacingBet}
+                disabled={hasPlacedBet || !isBettingPhase || placeBetMutation.isPending}
               >
                 {hasPlacedBet ? 'Aposta Registrada' : isBettingPhase ? 'Apostar' : 'Aguarde a próxima rodada'}
               </Button>

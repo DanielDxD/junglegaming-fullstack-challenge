@@ -8,7 +8,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { GameService } from '@/application/services/game';
+import { useVerifyRound } from '@/application/hooks/useGame';
 import { VerifyRoundResult } from '@/domain/entities/round';
 import { Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -18,28 +18,24 @@ interface ProvablyFairDialogProps {
   trigger: React.ReactNode;
 }
 
-const gameService = new GameService();
-
 export const ProvablyFairDialog: React.FC<ProvablyFairDialogProps> = ({ roundId, trigger }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<VerifyRoundResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const verifyMutation = useVerifyRound();
 
-  const verify = async () => {
+  const verify = () => {
     if (!roundId) return;
-    
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await gameService.verifyRound(roundId);
-      setResult(data);
-    } catch (err: unknown) {
-      setError(gameService.getErrorMessage(err as Error));
-    } finally {
-      setIsLoading(false);
-    }
+
+    verifyMutation.mutate(roundId, {
+      onSuccess: (data) => {
+        setResult(data);
+      }
+    });
   };
+
+  const isLoading = verifyMutation.isPending;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const error = verifyMutation.error ? (verifyMutation.error as any).response?.data?.message || "Erro ao verificar rodada" : null;
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -85,7 +81,7 @@ export const ProvablyFairDialog: React.FC<ProvablyFairDialogProps> = ({ roundId,
           ) : result ? (
             <div className="space-y-4">
               <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-lg space-y-3">
-                
+
                 <div>
                   <label className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Server Seed</label>
                   <p className="font-mono text-xs text-zinc-300 break-all bg-zinc-950 p-2 rounded mt-1 border border-zinc-800/50">
@@ -110,8 +106,8 @@ export const ProvablyFairDialog: React.FC<ProvablyFairDialogProps> = ({ roundId,
 
               <div className={cn(
                 "flex items-center justify-center gap-2 p-3 rounded-lg text-sm font-bold border",
-                result.isValid 
-                  ? "bg-green-500/10 border-green-500/20 text-green-400" 
+                result.isValid
+                  ? "bg-green-500/10 border-green-500/20 text-green-400"
                   : "bg-red-500/10 border-red-500/20 text-red-400"
               )}>
                 {result.isValid ? (

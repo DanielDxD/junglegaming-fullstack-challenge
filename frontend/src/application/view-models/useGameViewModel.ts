@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { QueryClient } from '@tanstack/react-query';
 import { GameService } from '../services/game';
 import { socketClient } from '@/infrastructure/socket';
 import { Round, CrashPoint } from '@/domain/entities/round';
@@ -11,11 +12,11 @@ interface GameState {
   multiplier: number;
   bets: PlayerBet[];
   history: CrashPoint[];
-  isLoading: boolean;
   error: string | null;
 
-  initialize: () => void;
+  initialize: (queryClient: QueryClient) => void;
   cleanup: () => void;
+  setInitialData: (data: { round: Round | null, history: CrashPoint[] }) => void;
   placeBet: (amount: number, autoCashoutMultiplier?: number) => Promise<boolean>;
   cashout: () => Promise<boolean>;
 }
@@ -27,111 +28,104 @@ export const useGameViewModel = create<GameState>((set, get) => ({
   multiplier: 1.0,
   bets: [],
   history: [],
-  isLoading: false,
   error: null,
 
-  initialize: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const currentRound = await gameService.getCurrentRound();
-      const history = await gameService.getHistory(20);
+  setInitialData: (data: { round: Round | null, history: CrashPoint[] }) => {
+    const { round, history } = data;
+    if (round) {
+      set({
+        round: {
+          id: round.id,
+          status: round.status,
+          hash: round.hash,
+          startedAt: round.startedAt,
+          finishedAt: null,
+        },
+        bets: round.bets || [],
+      });
+    }
+    set({ history: history || [] });
+  },
 
-      if (currentRound) {
-        set({
-          round: {
-            id: currentRound.id,
-            status: currentRound.status,
-            hash: currentRound.hash,
-            startedAt: currentRound.startedAt,
-            finishedAt: null,
-          },
-          bets: currentRound.bets || [],
-        });
+  initialize: (queryClient: QueryClient) => {
+    set({ error: null });
+    const socket = socketClient.connect();
+
+    socket.on('round.started', (data: { roundId: string }) => {
+      set((state) => ({
+        round: state.round ? { ...state.round, status: 'ACTIVE', id: data.roundId } : null,
+        multiplier: 1.0
+      }));
+    });
+
+    socket.on('round.betting', (data: { roundId: string, hash: string }) => {
+      set({
+        round: {
+          id: data.roundId,
+          hash: data.hash,
+          status: 'BETTING',
+          startedAt: new Date().toISOString(),
+          finishedAt: null
+        },
+        multiplier: 1.0,
+        bets: []
+      });
+    });
+
+    socket.on('round.multiplier_update', (data: { multiplier: number }) => {
+      set({ multiplier: data.multiplier });
+    });
+
+    socket.on('bet.placed', (data: { bet: PlayerBet }) => {
+      const { bets } = get();
+      if (!bets.find(b => b.id === data.bet.id)) {
+        set({ bets: [...bets, data.bet] });
       }
 
-      set({ history: history || [], isLoading: false });
-      const socket = socketClient.connect();
+      if (data.bet.keycloakId === useWalletViewModel.getState().wallet?.keycloakId) {
+        toast.success('Aposta realizada com sucesso!');
+        queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      }
+    });
 
-      socket.on('round.started', (data: { roundId: string }) => {
-        set((state) => ({
-          round: state.round ? { ...state.round, status: 'ACTIVE', id: data.roundId } : null,
-          multiplier: 1.0
-        }));
+    socket.on('bet.rejected', (data: { betId: string; keycloakId: string; reason: string }) => {
+      if (data.keycloakId === useWalletViewModel.getState().wallet?.keycloakId) {
+        if (data.reason === 'INSUFFICIENT_FUNDS') {
+          toast.error('Saldo insuficiente para realizar esta aposta.');
+        } else {
+          toast.error('Aposta rejeitada. Motivo: ' + data.reason);
+        }
+      }
+      
+      const { bets } = get();
+      set({ bets: bets.filter(b => b.id !== data.betId) });
+    });
+
+    socket.on('bet.cashed_out', (data: { betId: string; multiplier: number; keycloakId: string }) => {
+      const { bets } = get();
+      set({
+        bets: bets.map(b =>
+          b.id === data.betId || b.keycloakId === data.keycloakId
+            ? { ...b, status: 'WON', cashoutMultiplier: data.multiplier }
+            : b
+        )
       });
 
-      socket.on('round.betting', (data: { roundId: string, hash: string }) => {
+      if (data.keycloakId === useWalletViewModel.getState().wallet?.keycloakId) {
+        queryClient.invalidateQueries({ queryKey: ['wallet'] });
+      }
+    });
+
+    socket.on('round.crashed', (data: { crashPoint: number; seed: string; roundId: string }) => {
+      const { round, history } = get();
+      if (round && round.id === data.roundId) {
         set({
-          round: {
-            id: data.roundId,
-            hash: data.hash,
-            status: 'BETTING',
-            startedAt: new Date().toISOString(),
-            finishedAt: null
-          },
-          multiplier: 1.0,
-          bets: []
+          round: { ...round, status: 'FINISHED', crashPoint: data.crashPoint, seed: data.seed },
+          multiplier: data.crashPoint,
+          history: [{ hash: round.hash, crashPoint: data.crashPoint, seed: data.seed }, ...history].slice(0, 20)
         });
-      });
-
-      socket.on('round.multiplier_update', (data: { multiplier: number }) => {
-        set({ multiplier: data.multiplier });
-      });
-
-      socket.on('bet.placed', (data: { bet: PlayerBet }) => {
-        const { bets } = get();
-        if (!bets.find(b => b.id === data.bet.id)) {
-          set({ bets: [...bets, data.bet] });
-        }
-
-        if (data.bet.keycloakId === useWalletViewModel.getState().wallet?.keycloakId) {
-          toast.success('Aposta realizada com sucesso!');
-          useWalletViewModel.getState().fetchWallet();
-        }
-      });
-
-      socket.on('bet.rejected', (data: { betId: string; keycloakId: string; reason: string }) => {
-        if (data.keycloakId === useWalletViewModel.getState().wallet?.keycloakId) {
-          if (data.reason === 'INSUFFICIENT_FUNDS') {
-            toast.error('Saldo insuficiente para realizar esta aposta.');
-          } else {
-            toast.error('Aposta rejeitada. Motivo: ' + data.reason);
-          }
-        }
-        
-        // Remove the pending bet from the list
-        const { bets } = get();
-        set({ bets: bets.filter(b => b.id !== data.betId) });
-      });
-
-      socket.on('bet.cashed_out', (data: { betId: string; multiplier: number; keycloakId: string }) => {
-        const { bets } = get();
-        set({
-          bets: bets.map(b =>
-            b.id === data.betId || b.keycloakId === data.keycloakId
-              ? { ...b, status: 'WON', cashoutMultiplier: data.multiplier }
-              : b
-          )
-        });
-
-        if (data.keycloakId === useWalletViewModel.getState().wallet?.keycloakId) {
-          useWalletViewModel.getState().fetchWallet();
-        }
-      });
-
-      socket.on('round.crashed', (data: { crashPoint: number; seed: string; roundId: string }) => {
-        const { round, history } = get();
-        if (round && round.id === data.roundId) {
-          set({
-            round: { ...round, status: 'FINISHED', crashPoint: data.crashPoint, seed: data.seed },
-            multiplier: data.crashPoint,
-            history: [{ hash: round.hash, crashPoint: data.crashPoint, seed: data.seed }, ...history].slice(0, 20)
-          });
-        }
-      });
-
-    } catch (error: unknown) {
-      set({ error: gameService.getErrorMessage(error as Error), isLoading: false });
-    }
+      }
+    });
   },
 
   cleanup: () => {
