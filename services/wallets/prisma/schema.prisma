@@ -1,0 +1,16 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/infrastructure/database/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model wallets {
+  id         String   @id @default(ulid()) @db.VarChar(26)
+  keycloakId String   @unique @map("keycloak_id") @db.VarChar(255)
+  balance    BigInt   @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+}
