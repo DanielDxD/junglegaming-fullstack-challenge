@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/infrastructure/database/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RoundStatus {
+  PENDING
+  BETTING
+  ACTIVE
+  FINISHED
+}
+
+enum BetStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WON
+  LOST
+}
+
+model rounds {
+  id         String      @id @default(ulid()) @db.VarChar(26)
+  status     RoundStatus
+  crashPoint Decimal?    @map("crash_point") @db.Decimal(10, 2)
+  seed       String      @db.VarChar(255)
+  hash       String      @db.VarChar(255)
+  startedAt  DateTime?   @map("started_at")
+  finishedAt DateTime?   @map("finished_at")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  bets bets[]
+}
+
+model bets {
+  id                String    @id @default(ulid()) @db.VarChar(26)
+  roundId           String    @map("round_id") @db.VarChar(26)
+  keycloakId        String    @map("keycloak_id") @db.VarChar(255)
+  amount            BigInt
+  cashoutMultiplier Decimal?  @map("cashout_multiplier") @db.Decimal(10, 2)
+  autoCashoutMultiplier Decimal?  @map("auto_cashout_multiplier") @db.Decimal(10, 2)
+  status            BetStatus
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  round rounds @relation(fields: [roundId], references: [id])
+}
